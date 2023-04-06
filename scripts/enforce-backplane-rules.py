@@ -58,7 +58,7 @@ class _ClusterRoleSuffixRule(_Rule):
 
                     self.log_failure(
                          path,
-                         f"ClusterRole '{name}' is not suffixed with '-cluster' or '-project'"),
+                         f"ClusterRole '{name}' is not suffixed with '-aggregate', '-cluster' or '-project'"),
 
                if not self._file_suffix_matches_name_suffix(path, name):
                     failed = True
@@ -72,7 +72,7 @@ class _ClusterRoleSuffixRule(_Rule):
 
      @staticmethod
      def _has_valid_name_suffix(name):
-          valid_suffixes = ('-project', '-cluster')
+          valid_suffixes = ('-aggregate', '-project', '-cluster', 'backplane-impersonate-cluster-admin')
 
           return any(name.endswith(s) for s in valid_suffixes)
 
@@ -88,41 +88,104 @@ class _NoWildcardsRule(_Rule):
      def run(self, registry):
           failed = False
 
-          for path, role in registry.get_resources_of_type('Role').items():
-               name = role.content['metadata']['name']
+          roles = registry.get_resources_of_type('Role').items() | registry.get_resources_of_type('ClusterRole').items()
 
-               if self._has_invalid_rules(role):
+          for path, role in roles:
+               name = role.content['metadata']['name']
+               kind = role.content['kind']
+
+               if self._has_invalid_apiGroups(self, role):
                     failed = True
 
                     self.log_failure(
                          path,
-                         f"Role '{name}' has rules(s) which contain the wildcard '*'"
+                         f"{kind} '{name}' has apiGroups which contain wildcard '*'"
                     )
 
-          for path, cluster_role in registry.get_resources_of_type('ClusterRole').items():
-               name = cluster_role.content['metadata']['name']
-
-               if self._has_invalid_rules(cluster_role):
+               if self._has_invalid_resources(self, role):
                     failed = True
 
                     self.log_failure(
                          path,
-                         f"ClusterRole '{name}' has rules(s) which contain the wildcard '*'"
+                         f"{kind} '{name}' has resources which contain the wildcard '*' for either \"\" apiGroups or with verbs delete / deletecollection"
+                    )
+
+               if self._has_invalid_verbs(self, role):
+                    failed = True
+
+                    self.log_failure(
+                         path,
+                         f"{kind} '{name}' has verbs which contain the wildcard '*'"
                     )
 
           return failed
 
      @staticmethod
-     def _has_invalid_rules(role_like):
+     def _has_invalid_apiGroups(self, role_like):
           for rule in role_like.content.get('rules', []):
-               apiGroups = rule['apiGroups']
-               resources = rule['resources']
-               verbs = rule['verbs']
+               if 'apiGroups' in rule:
+                    apiGroups = rule['apiGroups']
 
-               if '*' in apiGroups + resources + verbs:
-                    return True
+                    if '*' in apiGroups:
+                         return True
 
           return False
+
+     @staticmethod
+     def _has_invalid_resources(self, role_like):
+          for rule in role_like.content.get('rules', []):
+               if "apiGroups" in rule and "resources" in rule and "verbs" in rule:
+                    apiGroups = rule['apiGroups']
+                    resources = rule['resources']
+                    verbs = rule['verbs']
+
+                    has_wildcard = False
+                    if '*' in resources and "tekton.dev" not in apiGroups:
+                         has_wildcard = True
+
+                    # cannot have * resource with "" apiGroup since it include Secret
+                    if has_wildcard and "" in apiGroups:
+                         return True
+
+                    # cannot have * resource for delete or deletecollection
+                    verbs = [x.lower() for x in verbs]
+                    if has_wildcard and not self._is_allowed_apiGroups(apiGroups) and ("delete" in verbs or "deletecollection" in verbs or "*" in verbs):
+                         return True
+
+          return False
+
+     @staticmethod
+     def _has_invalid_verbs(self, role_like):
+          for rule in role_like.content.get('rules', []):
+               if "apiGroups" in rule and "verbs" in rule:
+                    apiGroups = rule['apiGroups']
+                    verbs = rule['verbs']
+
+                    allowedApiGroups = [
+                         "tekton.dev",
+                         "logging.openshift.io",
+                         "velero.io",
+                    ]
+
+                    if '*' in verbs and not self._is_allowed_apiGroups(apiGroups):
+                         return True
+
+          return False
+
+     @staticmethod
+     def _is_allowed_apiGroups(apiGroups):
+          # specific apiGroups we permit any verbs against
+          allowedApiGroups = [
+               "tekton.dev",
+               "logging.openshift.io",
+               "velero.io",
+          ]
+
+          for apiGroup in apiGroups:
+               if not apiGroup in allowedApiGroups:
+                    return False
+
+          return True
 
 
 class _SubjectPermissionRoleNamesRule(_Rule):
@@ -170,7 +233,7 @@ class _SubjectPermissionRoleNamesRule(_Rule):
 
      @staticmethod
      def _filter_known_roles(role_names):
-          known_roles = ('admin', 'dedicated-readers', 'view')
+          known_roles = ('admin', 'dedicated-readers', 'view', 'system:openshift:cloud-credential-operator:cluster-reader')
 
           return [n for n in role_names if not n in known_roles]
 
