@@ -1,10 +1,8 @@
 # Goals
 
-Answer the following questions:
-* How can LPSRE team members proactively address backplane permissions concerns to facilitate the review process?
-* What conventions should be followed to make the intention behind changes more obvious?
-* Review comments are inconsistent (though not necessarily conflicting) between reviewers of backplane permissions changes. How can that be improved?
-* How can we reconcile SRE-P expectations with LPSRE expectations for what constitutes reasonable permissions?
+This document defines the backplane access guidelines. Teams that require access to backplane, or that require change to their current access, must create or modify a document "Service Access Requirements", and this guidelines document will serve as a reference that clarifies what permissions can be requested and under which circumstances.
+
+It covers all the different aspects that need to be taken into account by teams submitting Service Access Requirements, such as Training, Access Scope, different Personas that play a role in backplane access, and a catalog of permissions that can be requested.
 
 # Requirements
 
@@ -18,8 +16,6 @@ For the purposes of this document we are focusing on the in-cluster access, not 
 * OpenShift SRE have "Very limited" Write permission in core namespaces.
 * CEE has Read permission in all core and layered product namespaces.
 
-As this is written from the customer perspective and focuses on a single SRE personal there are some nuances to tease out when considering different types of support and SRE teams within Red Hat.  This document captures these nuances as guidelines.
-
 # Guidelines
 
 The following guidelines must be followed when submitting PR's that affect [backplane resources](../../deploy/backplane/).
@@ -27,9 +23,11 @@ Where possible these guidelines are enforced by CI and can be tested locally by 
 
 In general all permissions must follow the principle of least privilege.  Meaning you only get the bare minimum permissions required to do the job, nothing more.
 
-## Training
+## Definitions
 
-This guideline assumes all personas with access to production customer clusters have been through all necessary vetting (background checks) and training before access is granted.
+* secret data - any data with which a user could access other systems and either read customer data or modify any data (customer or non-customer)
+* platform namespace - any Namespace `name` that matches the following regular expression: `(^kube$|^kube-.*|^openshift$|^openshift-.*|^default$|^redhat-.*)`
+* customer namespace - any Namespace that is _not_ a *platform namespace*
 
 ## Access Scope
 
@@ -60,10 +58,10 @@ Escalation of privileges uses a specific user to elevate permissions to `cluster
 
 Permissions for day-to-day operations should not require any special permission to utilize.  These permissions follow these guidelines:
 
-* No secret access except where the secret is known to contain no actual secret data.
+* No secret access except where listed in the [Allowed Secret Access](#allowed-secret-access) section of this guideline.
 * No customer namespace access as the baseline.  Customer namespace access must be justified based on specific service support needs.
 * No write access by default, all write permissions require justification.
-* Read access to cluster scope resources may be granted if those resources do not contain any sensitive customer data.
+* Read access to cluster scope resources may be granted if those resources cannot contain secret data (see [Definitions](#definitions)).
 * Read access to namespace scoped resources is never granted at a cluster scope.
   * Exception may be granted for Red Hat managed systems only, where Red Hat is the customer, and such access is justified for day-to-day operations.
 * Existing ClusterRoles are preferred when granting permissions in a namespace.
@@ -86,3 +84,11 @@ Resource specific guidelines below are enforced by CI where possible.
 | SubjectPermissions | SubjectPermissions allowed namespace regex must constrain bindings to only the subset of namespaces access is required in. | N/A | :x: |
 | SubjectPermissions | SubjectPermissions must deny the `openshift-backplane-cluster-admin` namespace. | N/A | :heavy_check_mark: |
 | config.yaml        | RBAC for Layered Products teams is only provisioned on clusters where the respective Layered Products are installed. | N/A | :x: |
+
+## Allowed Secret Access
+
+The following secrets are allowed to be accessed for the given reasons.  Note to be in this list the `Secret` must not contain any secret data (see [Definitions](#definitions)).
+
+| Namespace | Secret | Reason |
+| --- | --- | --- |
+| openshift-monitoring | alertmanager-main | SRE have access to the PagerDuty API and DMS Webhook from other systems.  The ability to review the configuration of alertmanager is important for SRE to understand how monitoring has been configured and if there are issues with the routing of alerts. |
